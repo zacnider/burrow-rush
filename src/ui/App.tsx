@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent } from "react";
 import { ArrowDownRight, ArrowUpRight, ChevronRight, CircleHelp, Crown, Leaf, Radio, ShieldCheck, Sparkles, Users, Volume2, VolumeX, Wallet, Wheat } from "lucide-react";
+import type { Connector } from "wagmi";
 import { useSqueekchain } from "../hooks/useSqueekchain";
 import { useWallet } from "../hooks/useWallet";
 
@@ -150,7 +151,19 @@ function drawFood(ctx: CanvasRenderingContext2D, food: Food, time: number) {
 function pretty(value?: string | null) { if (!value) return "—"; try { return BigInt(value).toLocaleString("en-US"); } catch { return value; } }
 function makeName() { return `Nibble-${Math.floor(100 + Math.random() * 900)}`; }
 
-function Arena({ walletAddress, walletWrongNetwork, page }: { walletAddress: string | null; walletWrongNetwork: boolean; page: Page }) {
+function WalletPicker({ connectors, pending, onConnect, onClose }: { connectors: readonly Connector[]; pending: boolean; onConnect: (connector: Connector) => void; onClose: () => void }) {
+  return <div className="wallet-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="wallet-modal" role="dialog" aria-modal="true" aria-labelledby="wallet-modal-title">
+      <div className="wallet-modal-head"><div><span className="eyebrow"><span /> YOUR WALLET, YOUR CHOICE</span><h2 id="wallet-modal-title">Connect a <em>wallet.</em></h2></div><button className="wallet-modal-close" onClick={onClose} aria-label="Close wallet picker">×</button></div>
+      <p>Choose a wallet installed in this browser. Burrow Rush asks for a free signature to verify ownership; it never sends a transaction.</p>
+      <div className="wallet-modal-list">{connectors.map((connector) => <button key={connector.uid} disabled={pending} onClick={() => onConnect(connector)}><span className="wallet-modal-icon"><Wallet size={18} /></span><span><b>{connector.name === "Injected" ? "Other browser wallet" : connector.name}</b><small>{connector.type === "injected" ? "Browser extension or wallet app" : "Connect wallet"}</small></span><ChevronRight size={17} /></button>)}</div>
+      <div className="wallet-modal-note">BROWSER WALLETS ONLY · MOBILE QR CONNECT IS OFF FOR NOW</div>
+      <button className="wallet-modal-cancel" onClick={onClose}>CONTINUE WITHOUT A WALLET</button>
+    </section>
+  </div>;
+}
+
+function Arena({ walletAddress, walletWrongNetwork, signMessage, page }: { walletAddress: string | null; walletWrongNetwork: boolean; signMessage: (message: string) => Promise<string>; page: Page }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const stateRef = useRef<ArenaState | null>(null);
@@ -243,13 +256,19 @@ function Arena({ walletAddress, walletWrongNetwork, page }: { walletAddress: str
         const message = JSON.parse(String(event.data));
         if (message.type === "challenge") {
           const signingAddress = walletAddressRef.current;
-          if (guestModeRef.current) { socket.send(JSON.stringify({ type: "guest" })); return; }
-          if (!signingAddress || !window.ethereum) { setError("Wallet unavailable. Reconnect it, or choose Play as Guest."); setShowGuestOption(true); setConnecting(false); socket.close(); return; }
+          const linkingWallet = message.purpose === "link-wallet";
+          if (guestModeRef.current && !linkingWallet) { socket.send(JSON.stringify({ type: "guest" })); return; }
+          if (!signingAddress) { setError("Wallet unavailable. Reconnect it, or choose Play as Guest."); setShowGuestOption(true); setConnecting(false); socket.close(); return; }
           setCheckingNft(true); setNftMessage("Sign a free wallet message to check Squeek ownership.");
           const text = `Burrow Rush Sepolia sign-in\nNonce: ${message.nonce}`;
-          void window.ethereum.request({ method: "personal_sign", params: [text, signingAddress] })
+          void signMessage(text)
             .then((signature) => socket.send(JSON.stringify({ type: "auth", address: signingAddress, signature })))
-            .catch((reason) => { setCheckingNft(false); setError(reason && typeof reason === "object" && "code" in reason && Number(reason.code) === 4001 ? "Wallet signature was rejected. Retry, or choose Play as Guest." : "Wallet sign-in failed. Retry, or choose Play as Guest."); setShowGuestOption(true); setConnecting(false); socket.close(); });
+            .catch((reason) => {
+              setCheckingNft(false);
+              const rejected = reason && typeof reason === "object" && (("code" in reason && Number(reason.code) === 4001) || ("name" in reason && String(reason.name).includes("Rejected")));
+              if (linkingWallet) { setBankMessage(rejected ? "Wallet signature was rejected. Press save to try again." : "Wallet link failed. Press save to try again."); return; }
+              setError(rejected ? "Wallet signature was rejected. Retry, or choose Play as Guest." : "Wallet sign-in failed. Retry, or choose Play as Guest."); setShowGuestOption(true); setConnecting(false); socket.close();
+            });
           return;
         }
         if (message.type === "auth-result") {
@@ -266,7 +285,7 @@ function Arena({ walletAddress, walletWrongNetwork, page }: { walletAddress: str
     };
     socket.onerror = () => { setError("Arena connection failed. Start the multiplayer server, then reconnect."); setConnecting(false); };
     socket.onclose = () => { setConnected(false); setInGame(false); setConnecting(false); };
-  }, [coat, connecting, inGame, leave, name, walletAddress, walletWrongNetwork]);
+  }, [coat, connecting, inGame, leave, name, signMessage, walletAddress, walletWrongNetwork]);
 
   useEffect(() => {
     if (!inGame) return;
@@ -422,12 +441,14 @@ export default function App() {
   const chain = useSqueekchain(); const wallet = useWallet(); const telemetry = chain.measurement?.measurement;
   const musicRef = useRef<HTMLAudioElement>(null);
   const [musicPlaying, setMusicPlaying] = useState(false);
+  const [walletPickerOpen, setWalletPickerOpen] = useState(false);
   const [page, setPage] = useState<Page>(() => pageFromPath(window.location.pathname));
   useEffect(() => { const onPopState = () => setPage(pageFromPath(window.location.pathname)); window.addEventListener("popstate", onPopState); return () => window.removeEventListener("popstate", onPopState); }, []);
   useEffect(() => { const names: Record<Page, string> = { home: "Burrow Rush — Eat. Grow. Outrun.", play: "Play — Burrow Rush", leaderboard: "Leaderboard — Burrow Rush", "how-to": "How to Play — Burrow Rush" }; document.title = names[page]; const description = document.querySelector<HTMLMetaElement>('meta[name="description"]'); if (description) description.content = page === "how-to" ? "Learn Burrow Rush controls, food, hamster growth and seed stealing in the endless Squeekchain-powered arena." : page === "leaderboard" ? "Compare wallet-linked XP and live seed scores from the Burrow Rush multiplayer hamster arena." : page === "play" ? "Enter the endless Burrow Rush multiplayer hamster arena and gather food with live Squeekchain data." : "An endless multiplayer hamster arena. Gather food, grow, and outplay the burrow with live Squeekchain data."; }, [page]);
   const navigate = (event: ReactMouseEvent<HTMLAnchorElement>, target: Page) => { event.preventDefault(); const path = target === "home" ? "/" : target === "how-to" ? "/how-to" : `/${target}`; if (window.location.pathname !== path) window.history.pushState(null, "", path); setPage(target); window.scrollTo(0, 0); };
   const pageLink = (target: Page, label: string) => <a className={page === target ? "active" : ""} href={target === "home" ? "/" : target === "how-to" ? "/how-to" : `/${target}`} onClick={(event) => navigate(event, target)}>{label}</a>;
   const arenaWallet = wallet.address && wallet.chainId === "0xaa36a7" ? wallet.address : null;
+  const chooseWallet = async (connector: Connector) => { if (await wallet.connect(connector)) setWalletPickerOpen(false); };
   const toggleMusic = async () => {
     const audio = musicRef.current;
     if (!audio) return;
@@ -437,8 +458,9 @@ export default function App() {
   };
   return <div className="burrow-app">
     <audio ref={musicRef} src="/background-music.m4a" loop preload="none" onPause={() => setMusicPlaying(false)} onPlay={() => setMusicPlaying(true)} />
-    <header className="burrow-header"><a className="burrow-logo" href="/" onClick={(event) => navigate(event, "home")}><span className="logo-mark">b.</span><span>BURROW<span className="logo-soft">RUSH</span></span></a><nav>{pageLink("home", "HOME")}{pageLink("play", "PLAY")}{pageLink("leaderboard", "LEADERBOARD")}{pageLink("how-to", "HOW TO") }<span className="net-pill"><i /> SEPOLIA TESTNET</span><button className={`music-toggle${musicPlaying ? " is-playing" : ""}`} onClick={toggleMusic} aria-label={musicPlaying ? "Pause background music" : "Play background music"} aria-pressed={musicPlaying} title="Background music">{musicPlaying ? <Volume2 size={14} /> : <VolumeX size={14} />}<span>MUSIC {musicPlaying ? "ON" : "OFF"}</span></button>{wallet.address ? wallet.chainId !== "0xaa36a7" ? <button className="wallet-pill" onClick={wallet.switchToSepolia} disabled={wallet.pending}>{wallet.pending ? "SWITCHING…" : "SWITCH TO SEPOLIA"}</button> : <button className="wallet-pill" title={wallet.address}>{wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}</button> : <button className="wallet-pill" onClick={wallet.connect} disabled={wallet.pending}><Wallet size={14} />{wallet.pending ? "CONNECTING" : "CONNECT WALLET"}</button>}</nav></header>
+    <header className="burrow-header"><a className="burrow-logo" href="/" onClick={(event) => navigate(event, "home")}><span className="logo-mark">b.</span><span>BURROW<span className="logo-soft">RUSH</span></span></a><nav>{pageLink("home", "HOME")}{pageLink("play", "PLAY")}{pageLink("leaderboard", "LEADERBOARD")}{pageLink("how-to", "HOW TO") }<span className="net-pill"><i /> SEPOLIA TESTNET</span><button className={`music-toggle${musicPlaying ? " is-playing" : ""}`} onClick={toggleMusic} aria-label={musicPlaying ? "Pause background music" : "Play background music"} aria-pressed={musicPlaying} title="Background music">{musicPlaying ? <Volume2 size={14} /> : <VolumeX size={14} />}<span>MUSIC {musicPlaying ? "ON" : "OFF"}</span></button>{wallet.address ? wallet.chainId !== "0xaa36a7" ? <button className="wallet-pill" onClick={wallet.switchToSepolia} disabled={wallet.pending}>{wallet.pending ? "SWITCHING…" : "SWITCH TO SEPOLIA"}</button> : <button className="wallet-pill" onClick={() => void wallet.disconnect()} disabled={wallet.pending} title="Disconnect wallet">{wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}</button> : <button className="wallet-pill" onClick={() => setWalletPickerOpen(true)} disabled={wallet.pending}><Wallet size={14} />{wallet.pending ? "CONNECTING" : "CONNECT WALLET"}</button>}</nav></header>
     {wallet.error && <div className="burrow-wallet-error">{wallet.error}<button onClick={wallet.clearError}>×</button></div>}
+    {walletPickerOpen && <WalletPicker connectors={wallet.connectors} pending={wallet.pending} onConnect={(connector) => { void chooseWallet(connector); }} onClose={() => setWalletPickerOpen(false)} />}
     <main id="top">
       {page === "home" && <>
         <section className="burrow-hero"><div className="hero-bloom bloom-a"/><div className="hero-bloom bloom-b"/><div className="hero-copy"><div className="eyebrow"><span /> A LIVE MULTIPLAYER BURROW</div><h1>Small paws.<br /><em>Big burrow.</em></h1><p>Scavenge seeds. Grow your hamster. Outrun the ones who got bigger first.</p><div className="hero-actions"><a className="hero-cta" href="/play" onClick={(event) => navigate(event, "play")}>PLAY THE ARENA <ArrowDownRight size={16} /></a><span>REAL PLAYERS · LIVE SQUEEKCHAIN DATA</span></div><div className="hero-facts"><div><b><Users size={15} /> REAL PLAYERS</b><span>24 players per arena</span></div><div><b><Leaf size={15} /> EAT TO GROW</b><span>Seeds, corn & berries</span></div><div><b><Sparkles size={15} /> NO WAGERS</b><span>Just play and survive</span></div></div></div>
@@ -447,7 +469,7 @@ export default function App() {
         <section className="chain-strip"><div className="chain-strip-title" title={chain.error ?? "Reading official Squeekchain Sepolia data."}><i className={chain.core ? "" : "offline"}/><span>{chain.core ? "SQUEEKCHAIN CONNECTED" : chain.error ? "SQUEEKCHAIN DATA UNAVAILABLE" : "SYNCING SQUEEKCHAIN DATA"}</span></div><div><small>WHEEL</small><b>{telemetry?.coreStatus ?? "—"}</b></div><div><small>RPM</small><b>{telemetry ? (telemetry.rpmMilli / 1000).toFixed(1) : "—"}</b></div><div><small>SETTLED ROUND</small><b>{pretty(chain.core?.core.settledThroughRound)}</b></div><div><small>SQUEEK BLOCK</small><b>{pretty(chain.core?.core.blockHeight)}</b></div><a href="https://docs.squeekchain.com/developers/api/" target="_blank" rel="noreferrer">DATA SOURCE <ArrowUpRight size={12}/></a></section>
         <section className="home-pages"><div className="home-pages-heading"><div className="eyebrow"><span/> FIND YOUR WAY</div><h2>One burrow.<br/><em>Four ways in.</em></h2></div><div className="home-pages-grid"><a href="/play" onClick={(event) => navigate(event, "play")}><span>01 / PLAY</span><b>Enter the arena <ArrowUpRight size={17}/></b><small>Collect food, grow, and try to take seeds from smaller rivals.</small></a><a href="/leaderboard" onClick={(event) => navigate(event, "leaderboard")}><span>02 / LEADERBOARD</span><b>See who is growing <ArrowUpRight size={17}/></b><small>Compare live runs and permanent wallet-linked XP.</small></a><a href="/how-to" onClick={(event) => navigate(event, "how-to")}><span>03 / HOW TO</span><b>Learn the burrow <ArrowUpRight size={17}/></b><small>Controls, food, stealing rules, and the Squeekchain connection.</small></a></div></section>
       </>}
-      {(page === "play" || page === "leaderboard") && <Arena page={page} walletAddress={arenaWallet} walletWrongNetwork={Boolean(wallet.address && wallet.chainId !== "0xaa36a7")}/>}
+      {(page === "play" || page === "leaderboard") && <Arena page={page} walletAddress={arenaWallet} walletWrongNetwork={Boolean(wallet.address && wallet.chainId !== "0xaa36a7")} signMessage={wallet.signMessage}/>}
       {page === "how-to" && <section className="content-page how-to-page"><div className="content-page-heading"><div><div className="eyebrow"><span /> START HERE</div><h1>How to <em>play.</em></h1><p>Endless numbered arenas, up to 24 players each. Find food, get bigger, and choose your fights.</p></div><a className="hero-cta" href="/play" onClick={(event) => navigate(event, "play")}>ENTER THE BURROW <ArrowDownRight size={16}/></a></div><div className="how-cards"><article><span>01 / SCAVENGE</span><div className="how-icon seed-icon">✦</div><h3>Find the food</h3><p>Seeds, corn, berries and carrots appear around the live players. Eat them to gain seeds and grow.</p></article><article><span>02 / GROW</span><div className="how-icon grow-icon"><ArrowUpRight size={22}/></div><h3>Steer your hamster</h3><p>Use your cursor or WASD/arrow keys on desktop. On touch screens, drag the on-screen joystick. Release to stop.</p></article><article><span>03 / SURVIVE</span><div className="how-icon survive-icon"><CircleHelp size={22}/></div><h3>Pick your fights</h3><p>A hamster at least 5% larger can steal seeds on contact. With carried seeds, the smaller hamster loses seeds and shrinks while the larger one grows. After banking, bigger rivals can still bump a seedless hamster smaller, but cannot steal banked seeds.</p></article></div><div className="how-extra-grid"><article><span>SAFE START</span><h3>Three seconds to get moving</h3><p>A dashed ring and SAFE label protect each new arrival briefly. After that, size and contact determine who can steal.</p></article><article><span>SQUEEKCHAIN DATA</span><h3>The wheel feeds the burrow</h3><p>Burrow Rush reads public wheel status and SqueekCore's safely confirmed settled round. Each confirmed round selects a shared food event; matching food gives two seeds and double growth until the next round settles. Save your size and bank seeds any time with a verified wallet. Each saved seed becomes 10 XP on the all-time leaderboard. Banking resets your run seed count, while your current size stays for this run and is restored next time. XP has no token value.</p></article><article><span>WALLETS ARE OPTIONAL</span><h3>Play without a transaction</h3><p>A Sepolia wallet can sign a message (no transaction) to save your hamster size and bank seeds for XP. Guest play remains available, but guest progress is not stored.</p></article></div></section>}
     </main>
     <footer className="burrow-footer"><a className="burrow-logo" href="/" onClick={(event) => navigate(event, "home")}><span className="logo-mark">b.</span><span>BURROW<span className="logo-soft">RUSH</span></span></a><span>AN INDEPENDENT COMMUNITY GAME · SEPOLIA TESTNET</span><a href="https://squeekchain.com/genesis/code" target="_blank" rel="noreferrer">SQUEEKCHAIN GENESIS <ArrowUpRight size={12}/></a></footer>
