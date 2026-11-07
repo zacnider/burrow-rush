@@ -1,0 +1,25 @@
+[Unit]
+Description=Burrow Rush multiplayer game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=burrow
+Group=burrow
+WorkingDirectory=/opt/burrow-rush
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=ARENA_ORIGINS=https://burrowrush.lol
+Environment=ARENA_DATA_FILE=/var/lib/burrow-rush/profiles.json
+ExecStart=/usr/bin/node /opt/burrow-rush/server/index.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/burrow-rush
+
+[Install]
+WantedBy=multi-user.target

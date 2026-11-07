@@ -1,0 +1,9 @@
+/node_modules/
+/dist/
+/burrow-launch/
+/burrow-power-review/
+/main1.mp3
+/server/data/profiles.json
+/server/data/*.tmp
+/.env
+/.env.*
