@@ -14,7 +14,7 @@ type ArenaState = { type: "state"; players: Player[]; food: Food[]; wheel: { sta
 const WS_URL = import.meta.env.VITE_ARENA_WS_URL || (import.meta.env.DEV
   ? `ws://${location.hostname}:8787/arena`
   : `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/arena`);
-const LEADERBOARD_URL = WS_URL.replace(/^ws/, "http").replace(/\/arena$/, "/leaderboard");
+const LEADERBOARD_URL = WS_URL.replace(/^ws/, "http").replace(/\/arena$/, "/api/leaderboard");
 const COLORS = ["#ffca68", "#87dfb0", "#9db7ff", "#f59c9d", "#d4a7ff", "#84d6e8", "#ffc0dc"];
 const COATS = ["Golden", "Silver", "Calico"];
 const HAMSTER_SHEETS = ["golden", "silver", "calico"].map((coat) => { const image = new Image(); image.src = `/arena/sheets/${coat}-walk.png`; return image; });

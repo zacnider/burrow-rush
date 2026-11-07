@@ -276,7 +276,7 @@ async function serveWeb(req, res) {
 
 const server = createServer((req, res) => {
   if (req.url === "/health") { res.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "*" }); res.end(JSON.stringify({ ok: true, players: [...players.values()].filter((p) => p.arenaId === currentArena).length, maxPlayers: MAX_PLAYERS, arena: currentArena })); return; }
-  if (req.url?.split("?")[0] === "/leaderboard") {
+  if (req.url?.split("?")[0] === "/api/leaderboard") {
     const ranked = [...profiles.values()].filter((profile) => profile.xp > 0).sort((a, b) => b.xp - a.xp || b.seedsBanked - a.seedsBanked).slice(0, 100).map((profile) => ({ address: `${profile.address.slice(0, 6)}…${profile.address.slice(-4)}`, name: profile.name, xp: profile.xp, seedsBanked: profile.seedsBanked, savedSize: Number((profile.savedRadius / 14).toFixed(2)), updatedAt: profile.updatedAt }));
     res.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-store" }); res.end(JSON.stringify({ players: ranked })); return;
   }
