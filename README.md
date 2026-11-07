@@ -1,5 +1,7 @@
 # Burrow Rush
 
+squeekchain-project: 6a0e41d7-afdd-4dc6-bf4d-61f2f3eeb675
+
 A real-time multiplayer hamster arena for Squeekchain. Players steer a hamster directly across an endless, hand-drawn grass-and-bedding world, gather illustrated seeds, corn, berries and carrots, and grow. Larger hamsters can steal a few seeds from smaller rivals on contact. Three four-frame hamster sprite sheets animate movement; the terrain is generated from coordinate-seeded chunks with varied grass, clover, flowers and straw. Food spawns in irregular rings around active players.
 
 ## Run locally
